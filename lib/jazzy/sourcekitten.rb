@@ -350,10 +350,24 @@ module Jazzy
                              end
     end
 
+    def self.get_first_filepath(substructures, source_directory)
+      Array(substructures).each do |substructure|
+        if substructure.key?('key.filepath') && substructure['key.filepath'].start_with?(source_directory)
+          return substructure['key.filepath']
+        elsif substructure.key?('key.substructure')
+          filepath = get_first_filepath(substructure['key.substructure'], source_directory)
+          return filepath if filepath && filepath.to_s.strip.length > 0
+        end
+      end
+        
+      return nil
+    end
+
     # rubocop:disable Metrics/MethodLength
     # rubocop:disable Metrics/CyclomaticComplexity
     # rubocop:disable Metrics/PerceivedComplexity
     def self.make_source_declarations(docs, parent = nil)
+      source_directory = Config.instance.source_directory.to_s
       declarations = []
       current_mark = SourceMark.new
       Array(docs).each do |doc|
@@ -365,8 +379,35 @@ module Jazzy
         end
         declaration = SourceDeclaration.new
         declaration.parent_in_code = parent
+          
         declaration.type = SourceDeclaration::Type.new(doc['key.kind'])
         declaration.typename = doc['key.typename']
+        declaration.name = doc['key.name']
+
+        if declaration.type.swift_extension? && doc['key.name'] == 'Reactive'
+          full_file_path = doc['key.filepath']
+          
+          # Search children recursively for the source file path if it is not yet found.
+          full_file_path = get_first_filepath(doc['key.substructure'], source_directory) unless full_file_path
+
+          if full_file_path.to_s.start_with?(source_directory)          
+            constraint_start = doc['key.nameoffset'].to_i + doc['key.namelength'].to_i
+            constraint_end = doc['key.bodyoffset'].to_i
+          
+            if constraint_end > constraint_start
+              constraint = IO.read(full_file_path, constraint_end - constraint_start, constraint_start)
+          
+              results = /where\sBase\s?\:\s?([a-zA-Z0-9]+)\s?/.match(constraint)
+
+              if results
+                declaration.type = SourceDeclaration::Type.new('source.lang.swift.decl.struct')
+                declaration.name = 'Reactive<' + results[1] + '>'
+                declaration.typename = 'Reactive<' + results[1] + '>.Type'
+              end
+            end
+          end
+        end
+
         current_mark = SourceMark.new(doc['key.name']) if declaration.type.mark?
         if declaration.type.swift_enum_case?
           # Enum "cases" are thin wrappers around enum "elements".
@@ -382,11 +423,10 @@ module Jazzy
                 'https://github.com/realm/jazzy/issues about adding support ' \
                 "for `#{declaration.type.kind}`."
         end
-
+				
         declaration.file = Pathname(doc['key.filepath']) if doc['key.filepath']
         declaration.usr = doc['key.usr']
         declaration.modulename = doc['key.modulename']
-        declaration.name = doc['key.name']
         declaration.mark = current_mark
         declaration.access_control_level =
           SourceDeclaration::AccessControlLevel.from_doc(doc)
@@ -453,10 +493,12 @@ module Jazzy
       extensions, typedecls = decls.partition { |d| d.type.extension? }
 
       if typedecls.size > 1
-        warn 'Found conflicting type declarations with the same name, which ' \
-          'may indicate a build issue or a bug in Jazzy: ' +
-             typedecls.map { |t| "#{t.type.name.downcase} #{t.name}" }
-             .join(', ')
+        unless typedecls.first.name.start_with?('Reactive')
+          warn 'Found conflicting type declarations with the same name, which ' \
+            'may indicate a build issue or a bug in Jazzy: ' +
+              typedecls.map { |t| "#{t.type.name.downcase} #{t.name}" }
+                .join(', ')
+        end
       end
       typedecl = typedecls.first
 
