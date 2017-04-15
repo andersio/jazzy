@@ -318,17 +318,29 @@ module Jazzy
         return process_undocumented_token(doc, declaration)
       end
 
-      declaration.declaration = Highlighter.highlight(
-        doc['key.parsed_declaration'] || doc['key.doc.declaration'],
-        Config.instance.objc_mode ? 'objc' : 'swift',
-      )
-      if Config.instance.objc_mode && doc['key.swift_declaration']
-        declaration.other_language_declaration = Highlighter.highlight(
-          doc['key.swift_declaration'], 'swift'
+      if declaration.type.reactivecocoa_extension?
+        declaration.declaration = Highlighter.highlight(
+          "extension Reactive where Base: " + declaration.name,
+          'swift'
         )
+        
+        declaration.abstract = Jazzy.markdown.render(%{
+The reactive extension can be accessed through the `reactive` instance property and the `reactive` static property.})
+      else
+        declaration.declaration = Highlighter.highlight(
+          doc['key.parsed_declaration'] || doc['key.doc.declaration'],
+          Config.instance.objc_mode ? 'objc' : 'swift',
+        )
+        
+        if Config.instance.objc_mode && doc['key.swift_declaration']
+          declaration.other_language_declaration = Highlighter.highlight(
+            doc['key.swift_declaration'], 'swift'
+          )
+        end
+        
+        declaration.abstract = Jazzy.markdown.render(doc['key.doc.comment'] || '')
       end
-
-      declaration.abstract = Jazzy.markdown.render(doc['key.doc.comment'] || '')
+        
       declaration.discussion = ''
       declaration.return = make_paragraphs(doc, 'key.doc.result_discussion')
 
@@ -400,8 +412,8 @@ module Jazzy
               results = /where\sBase\s?\:\s?([a-zA-Z0-9]+)\s?/.match(constraint)
 
               if results
-                declaration.type = SourceDeclaration::Type.new('source.lang.swift.decl.struct')
-                declaration.name = 'Reactive<' + results[1] + '>'
+                declaration.type = SourceDeclaration::Type.new('source.lang.swift.decl.reactivecocoaextension')
+                declaration.name = results[1]
                 declaration.typename = 'Reactive<' + results[1] + '>.Type'
               end
             end
@@ -493,7 +505,7 @@ module Jazzy
       extensions, typedecls = decls.partition { |d| d.type.extension? }
 
       if typedecls.size > 1
-        unless typedecls.first.name.start_with?('Reactive')
+        unless typedecls.all? { |decl| decl.type.reactivecocoa_extension? }
           warn 'Found conflicting type declarations with the same name, which ' \
             'may indicate a build issue or a bug in Jazzy: ' +
               typedecls.map { |t| "#{t.type.name.downcase} #{t.name}" }
