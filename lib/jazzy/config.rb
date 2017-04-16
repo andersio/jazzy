@@ -246,6 +246,26 @@ module Jazzy
                    'https://github.com/realm/realm-cocoa/tree/v0.87.1)'
 
     # ──────── Doc generation options ────────
+    config_attr :extension_constraints_as_mark,
+      command_line: '--extension-constraints',
+      description: 'Treat extension constraints as `MARK: `.',
+      default: true
+    
+    config_attr :collapse_extensions,
+      command_line: '--collapse-extensions',
+      description: 'Collapse consecutive extensions of the same constraint.',
+      default: true
+    
+    config_attr :specialize_reactive_extensions,
+      command_line: '--reactive-extensions',
+      description: 'Specialize reactive extensions, instead of having an umbrella `Reactive` entry.',
+      default: true
+    
+    config_attr :collapse_signal_protocols,
+      command_line: '--collapse-signal-protocols',
+      description: 'Collapse `SignalProtocol` and `SignalProducerProtocol` into the concrete types.',
+      default: true
+    
     config_attr :disable_search,
       command_line: '--disable-search',
       description: ['Avoid generating a search index. '\

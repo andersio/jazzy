@@ -400,7 +400,8 @@ The reactive extension can be accessed through the `reactive` instance property 
         if declaration.type.mark?
           mark = SourceMark.new(doc['key.name']) 
         
-          if matches = /RAC\_EXTENSION\s([a-zA-Z0-9]+)\sSTART/.match(mark.name)
+          if Config.instance.extension_constraints_as_mark &&
+             matches = /RAC\_EXTENSION\s([a-zA-Z0-9]+)\sSTART/.match(mark.name)
             rac_extension_base = matches[1]
             next
           elsif rac_extension_base &&
@@ -437,15 +438,16 @@ The reactive extension can be accessed through the `reactive` instance property 
           
               #results = /where\sBase\s?\:\s?([a-zA-Z0-9]+)\s?/.match(constraint)
               if matches = /where(.+)\{/.match(bytes)
-                if doc['key.name'] == 'Reactive' &&
+                if Config.instance.specialize_reactive_extensions &&
+                   doc['key.name'] == 'Reactive' &&
                    base_matches = /Base\s?\:\s?([a-zA-Z0-9]+)/.match(matches[1])
                   declaration.type = SourceDeclaration::Type.new('source.lang.swift.decl.reactivecocoaextension')
                   declaration.name = base_matches[1]
                   declaration.typename = 'Reactive<' + base_matches[1] + '>.Type'
-                else
+                elsif Config.instance.extension_constraints_as_mark
                   extension_mark = SourceMark.new(matches[1].strip, true)
                 end
-              else
+              elsif Config.instance.extension_constraints_as_mark
                 extension_mark = SourceMark.new('', true)
               end
             end
@@ -523,9 +525,11 @@ The reactive extension can be accessed through the `reactive` instance property 
     def self.deduplication_key(decl, root_decls)
       if decl.type.swift_extensible? || decl.type.swift_extension?
         # Collapse the signal protocols into the concrete type.
-        if decl.name == 'Signal' || decl.name == 'SignalProtocol'
+        if (decl.name == 'Signal' || decl.name == 'SignalProtocol') &&
+           Config.instance.collapse_signal_protocols
           ['ras.Signal']
-        elsif decl.name == 'SignalProducer' || decl.name == 'SignalProducerProtocol'
+        elsif (decl.name == 'SignalProducer' || decl.name == 'SignalProducerProtocol') &&
+           Config.instance.collapse_signal_protocols
           ['ras.SignalProducer']
         else
           [decl.usr, decl.name]
@@ -543,7 +547,11 @@ The reactive extension can be accessed through the `reactive` instance property 
     def self.merge_declarations(decls)
       extensions, typedecls = decls.partition { |d| d.type.extension? }
 
-      collapsing_signal_protocol = typedecls.any? { |decl| decl.name == 'SignalProtocol' || decl.name == 'SignalProducerProtocol' }
+      collapsing_signal_protocol = false
+      
+      if Config.instance.collapse_signal_protocols
+        collapsing_signal_protocol = typedecls.any? { |decl| decl.name == 'SignalProtocol' || decl.name == 'SignalProducerProtocol' }
+      end
       
       if !collapsing_signal_protocol && typedecls.size > 1
         unless typedecls.all? { |decl| decl.type.reactivecocoa_extension? }
