@@ -351,11 +351,12 @@ The reactive extension can be accessed through the `reactive` instance property 
     # rubocop:enable Metrics/CyclomaticComplexity
     # rubocop:enable Metrics/PerceivedComplexity
 
-    def self.make_substructure(doc, declaration)
+    def self.make_substructure(doc, declaration, extension_mark = nil)
       declaration.children = if doc['key.substructure']
                                make_source_declarations(
                                  doc['key.substructure'],
                                  declaration,
+                                 extension_mark
                                )
                              else
                                []
@@ -378,10 +379,10 @@ The reactive extension can be accessed through the `reactive` instance property 
     # rubocop:disable Metrics/MethodLength
     # rubocop:disable Metrics/CyclomaticComplexity
     # rubocop:disable Metrics/PerceivedComplexity
-    def self.make_source_declarations(docs, parent = nil)
+    def self.make_source_declarations(docs, parent = nil, extension_mark = nil)
       source_directory = Config.instance.source_directory.to_s
       declarations = []
-      current_mark = SourceMark.new
+      current_mark = if !extension_mark.nil? then extension_mark else SourceMark.new end
       rac_extension_base = nil
       
       Array(docs).each do |doc|
@@ -420,25 +421,32 @@ The reactive extension can be accessed through the `reactive` instance property 
           declaration.name = doc['key.name']
         end
           
-        if declaration.type.swift_extension? && doc['key.name'] == 'Reactive'
-          full_file_path = doc['key.filepath']
-          
-          # Search children recursively for the source file path if it is not yet found.
-          full_file_path = get_first_filepath(doc['key.substructure'], source_directory) unless full_file_path
+        extension_mark = nil
+        
+        if declaration.type.swift_extension?          
+          # Search children for the source file path, since `doc['key.filepath']` does
+          # not refer to the file that the extension belongs to.
+          full_file_path = get_first_filepath(doc['key.substructure'], source_directory)
 
           if full_file_path.to_s.start_with?(source_directory)          
-            constraint_start = doc['key.nameoffset'].to_i + doc['key.namelength'].to_i
-            constraint_end = doc['key.bodyoffset'].to_i
+            byte_start = doc['key.nameoffset'].to_i + doc['key.namelength'].to_i
+            byte_end = doc['key.bodyoffset'].to_i
           
-            if constraint_end > constraint_start
-              constraint = IO.read(full_file_path, constraint_end - constraint_start, constraint_start)
+            if byte_end > byte_start
+              bytes = IO.read(full_file_path, byte_end - byte_start, byte_start)
           
-              results = /where\sBase\s?\:\s?([a-zA-Z0-9]+)\s?/.match(constraint)
-
-              if results
-                declaration.type = SourceDeclaration::Type.new('source.lang.swift.decl.reactivecocoaextension')
-                declaration.name = results[1]
-                declaration.typename = 'Reactive<' + results[1] + '>.Type'
+              #results = /where\sBase\s?\:\s?([a-zA-Z0-9]+)\s?/.match(constraint)
+              if matches = /where(.+)\{/.match(bytes)
+                if doc['key.name'] == 'Reactive' &&
+                   base_matches = /Base\s?\:\s?([a-zA-Z0-9]+)/.match(matches[1])
+                  declaration.type = SourceDeclaration::Type.new('source.lang.swift.decl.reactivecocoaextension')
+                  declaration.name = base_matches[1]
+                  declaration.typename = 'Reactive<' + base_matches[1] + '>.Type'
+                else
+                  extension_mark = SourceMark.new(matches[1].strip, true)
+                end
+              else
+                extension_mark = SourceMark.new('', true)
               end
             end
           end
@@ -472,7 +480,7 @@ The reactive extension can be accessed through the `reactive` instance property 
         declaration.end_line = doc['key.parsed_scope.end']
 
         next unless make_doc_info(doc, declaration)
-        make_substructure(doc, declaration)
+        make_substructure(doc, declaration, extension_mark)
         declarations << declaration
       end
       declarations

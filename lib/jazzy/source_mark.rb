@@ -3,14 +3,19 @@ module Jazzy
     attr_accessor :name
     attr_accessor :has_start_dash
     attr_accessor :has_end_dash
+    attr_accessor :is_extension_constraint
 
-    def initialize(mark_string = nil)
-      return unless mark_string
+    def initialize(mark_string = nil, is_extension_constraint = false)
+      self.is_extension_constraint = is_extension_constraint
 
-      # Format: 'MARK: - NAME -' with dashes optional
-      mark_string.sub!(/^MARK: /, '')
+      return unless is_extension_constraint || mark_string
 
-      if mark_string.empty?
+      unless is_extension_constraint
+        # Format: 'MARK: - NAME -' with dashes optional
+        mark_string.sub!(/^MARK: /, '')
+      end
+
+      if !is_extension_constraint && mark_string.empty?
         # Empty
         return
       elsif mark_string == '-'
