@@ -15,22 +15,30 @@ module Jazzy
         mark_string.sub!(/^MARK: /, '')
       end
 
-      if !is_extension_constraint && mark_string.empty?
-        # Empty
-        return
-      elsif mark_string == '-'
-        # Separator
-        self.has_start_dash = true
-        return
+      if is_extension_constraint
+        mark_string.sub!(/Value\s?\:\s?Signal(Producer)?Protocol\,\s?Error\s?\=\=\s?([a-zA-Z0-9\.]+)/, 'Value == Signal$1<Value.Value, $2>')
+        mark_string.sub!(/Value\s?\:\s?Signal(Producer)?Protocol/, 'Value == Signal$1<Value.Value, Error>')
+        mark_string.sub!(/Value\s?\=\=\s?EventProtocol/, '<U, E> Value == Event<U, E>')
+        mark_string.sub!(/Value\s?\=\=\s?OptionalProtocol/, '<U> Value == U?')
+        self.name = mark_string
+      else
+        if mark_string.empty?
+          # Empty
+          return
+        elsif mark_string == '-'
+          # Separator
+          self.has_start_dash = true
+          return
+        end
+
+        self.has_start_dash = mark_string.start_with?('- ')
+        self.has_end_dash = mark_string.end_with?(' -')
+
+        start_index = has_start_dash ? 2 : 0
+        end_index = has_end_dash ? -3 : -1
+
+        self.name = mark_string[start_index..end_index]
       end
-
-      self.has_start_dash = mark_string.start_with?('- ')
-      self.has_end_dash = mark_string.end_with?(' -')
-
-      start_index = has_start_dash ? 2 : 0
-      end_index = has_end_dash ? -3 : -1
-
-      self.name = mark_string[start_index..end_index]
     end
   end
 end
