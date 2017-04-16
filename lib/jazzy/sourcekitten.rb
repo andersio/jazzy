@@ -314,7 +314,7 @@ module Jazzy
     def self.make_doc_info(doc, declaration)
       return unless should_document?(doc)
 
-      unless doc['key.doc.full_as_xml']
+      unless declaration.type.reactivecocoa_extension? || doc['key.doc.full_as_xml']
         return process_undocumented_token(doc, declaration)
       end
 
@@ -382,6 +382,8 @@ The reactive extension can be accessed through the `reactive` instance property 
       source_directory = Config.instance.source_directory.to_s
       declarations = []
       current_mark = SourceMark.new
+      rac_extension_base = nil
+      
       Array(docs).each do |doc|
         if doc.key?('key.diagnostic_stage')
           declarations += make_source_declarations(
@@ -389,13 +391,35 @@ The reactive extension can be accessed through the `reactive` instance property 
           )
           next
         end
+        
         declaration = SourceDeclaration.new
         declaration.parent_in_code = parent
-          
         declaration.type = SourceDeclaration::Type.new(doc['key.kind'])
-        declaration.typename = doc['key.typename']
-        declaration.name = doc['key.name']
 
+        if declaration.type.mark?
+          mark = SourceMark.new(doc['key.name']) 
+        
+          if matches = /RAC\_EXTENSION\s([a-zA-Z0-9]+)\sSTART/.match(mark.name)
+            rac_extension_base = matches[1]
+            next
+          elsif rac_extension_base &&
+                matches = /RAC\_EXTENSION\s#{Regexp.quote(rac_extension_base)}\sEND/.match(mark.name)
+            rac_extension_base = nil
+            next
+          else
+            current_mark = mark
+          end
+        end
+        
+        if declaration.type.swift_extension? && rac_extension_base
+          declaration.type = SourceDeclaration::Type.new('source.lang.swift.decl.reactivecocoaextension')
+          declaration.name = rac_extension_base
+          declaration.typename = 'Reactive<' + rac_extension_base + '>.Type'
+        else
+          declaration.typename = doc['key.typename']
+          declaration.name = doc['key.name']
+        end
+          
         if declaration.type.swift_extension? && doc['key.name'] == 'Reactive'
           full_file_path = doc['key.filepath']
           
@@ -420,7 +444,6 @@ The reactive extension can be accessed through the `reactive` instance property 
           end
         end
 
-        current_mark = SourceMark.new(doc['key.name']) if declaration.type.mark?
         if declaration.type.swift_enum_case?
           # Enum "cases" are thin wrappers around enum "elements".
           declarations += make_source_declarations(
@@ -428,6 +451,7 @@ The reactive extension can be accessed through the `reactive` instance property 
           )
           next
         end
+        
         next unless declaration.type.should_document?
 
         unless declaration.type.name
@@ -694,6 +718,7 @@ The reactive extension can be accessed through the `reactive` instance property 
         # than min_acl
         docs = docs.reject { |doc| doc.type.swift_enum_element? }
       end
+
       ungrouped_docs = docs
       docs = group_docs(docs)
       make_doc_urls(docs)
