@@ -522,7 +522,14 @@ The reactive extension can be accessed through the `reactive` instance property 
     # Two declarations get merged if they have the same deduplication key.
     def self.deduplication_key(decl, root_decls)
       if decl.type.swift_extensible? || decl.type.swift_extension?
-        [decl.usr, decl.name]
+        # Collapse the signal protocols into the concrete type.
+        if decl.name == 'Signal' || decl.name == 'SignalProtocol'
+          ['ras.Signal']
+        elsif decl.name == 'SignalProducer' || decl.name == 'SignalProducerProtocol'
+          ['ras.SignalProducer']
+        else
+          [decl.usr, decl.name]
+        end
       elsif mergeable_objc?(decl, root_decls)
         name, _ = decl.objc_category_name || decl.name
         [name, :objc_class_and_categories]
@@ -536,7 +543,9 @@ The reactive extension can be accessed through the `reactive` instance property 
     def self.merge_declarations(decls)
       extensions, typedecls = decls.partition { |d| d.type.extension? }
 
-      if typedecls.size > 1
+      collapsing_signal_protocol = typedecls.any? { |decl| decl.name == 'SignalProtocol' || decl.name == 'SignalProducerProtocol' }
+      
+      if !collapsing_signal_protocol && typedecls.size > 1
         unless typedecls.all? { |decl| decl.type.reactivecocoa_extension? }
           warn 'Found conflicting type declarations with the same name, which ' \
             'may indicate a build issue or a bug in Jazzy: ' +
@@ -544,6 +553,11 @@ The reactive extension can be accessed through the `reactive` instance property 
                 .join(', ')
         end
       end
+      
+      if collapsing_signal_protocol
+        typedecls.delete_if { |decl| decl.name.end_with?('Protocol') }
+      end
+      
       typedecl = typedecls.first
 
       if typedecl && typedecl.type.swift_protocol?
@@ -719,6 +733,7 @@ The reactive extension can be accessed through the `reactive` instance property 
       sourcekitten_json = filter_excluded_files(JSON.parse(sourcekitten_output))
       docs = make_source_declarations(sourcekitten_json).concat inject_docs
       docs = deduplicate_declarations(docs)
+      
       if Config.instance.objc_mode
         docs = reject_objc_types(docs)
       else

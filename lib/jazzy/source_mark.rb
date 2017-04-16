@@ -16,10 +16,12 @@ module Jazzy
       end
 
       if is_extension_constraint
-        mark_string.sub!(/Value\s?\:\s?Signal(Producer)?Protocol\,\s?Error\s?\=\=\s?([a-zA-Z0-9\.]+)/, 'Value == Signal$1<Value.Value, $2>')
-        mark_string.sub!(/Value\s?\:\s?Signal(Producer)?Protocol/, 'Value == Signal$1<Value.Value, Error>')
-        mark_string.sub!(/Value\s?\=\=\s?EventProtocol/, '<U, E> Value == Event<U, E>')
-        mark_string.sub!(/Value\s?\=\=\s?OptionalProtocol/, '<U> Value == U?')
+        mark_string.sub!(/Value\s?\:\s?Signal(Producer)?Protocol\,\s?Error\s?\=\=\s?NoError\,\s?Value\.Error\s?\=\=\s?NoError/, '<U> Value == Signal\1<U, NoError>, Error == NoError')
+        mark_string.sub!(/Value\s?\:\s?Signal(Producer)?Protocol\,\s?Value\.Error\s?\=\=\s?NoError/, '<U> Value == Signal\1<U, NoError>')
+        mark_string.sub!(/Value\s?\:\s?Signal(Producer)?Protocol\,\s?Error\s?\=\=\s?NoError/, '<U, E> Value == Signal\1<U, E>, Error == NoError')
+        mark_string.sub!(/Value\s?\:\s?Signal(Producer)?Protocol\,\s?Error\s?\=\=\s?Value\.Error/, '<U> Value == Signal\1<U, Error>')
+        mark_string.sub!(/Value\s?\:\s?EventProtocol/, '<U, E> Value == Event<U, E>')
+        mark_string.sub!(/Value\s?\:\s?OptionalProtocol/, '<U> Value == U?')
         self.name = mark_string
       else
         if mark_string.empty?
