@@ -87,7 +87,11 @@ module Jazzy
       def swift_protocol?
         kind == 'source.lang.swift.decl.protocol'
       end
-
+      
+      def reactivecocoa_extension?
+        kind == 'source.lang.swift.decl.reactivecocoaextension'
+      end
+      
       def param?
         # SourceKit strangely categorizes initializer parameters as local
         # variables, so both kinds represent a parameter in jazzy.
@@ -341,6 +345,10 @@ module Jazzy
         'source.lang.swift.decl.associatedtype' => {
           jazzy: 'Associated Type',
           dash: 'Alias',
+        }.freeze,
+        'source.lang.swift.decl.reactivecocoaextension' => {
+          jazzy: 'Reactive Extension',
+          dash: 'Extension',
         }.freeze,
       }.freeze
     end

@@ -340,20 +340,91 @@ module Jazzy
     # @param [Config] options Build options
     # @param [Hash] doc_model Parsed doc. @see SourceKitten.parse
     def self.render_tasks(source_module, children)
-      marks = children.map(&:mark).uniq.compact
-      mark_names_counts = {}
-      marks.map do |mark|
-        mark_children = children.select { |child| child.mark == mark }
-        items = mark_children.map { |child| render_item(child, source_module) }
-        uid = (mark.name || 'Unnamed').to_s
-        if mark_names_counts.key?(uid)
-          mark_names_counts[uid] += 1
-          uid += (mark_names_counts[uid]).to_s
-        else
-          mark_names_counts[uid] = 1
+      #marks = children.map(&:mark).uniq { |mark| mark.name == mark.name else child.mark == mark end }.compact
+      ordered_tokens = children.map { |child| child.mark.nil? ? nil : [child.file, child.mark] }.uniq.compact
+      grouped_tokens = {}
+      group_ids = []
+      
+      # group id: (filepath, extension_constraint)
+      current_group_id = nil
+      current_group = []
+      
+      ordered_tokens.map do |token|
+        unless current_group_id
+          current_group_id = token[0].to_s + ':ext:' + token[1].name.to_s
+          group_ids.push(current_group_id)
         end
-        make_task(mark, uid, items)
+        
+        # Unconstrained extensions also emit extension constraint marks.
+        if !current_group.empty? && token[1].is_extension_constraint
+          if grouped_tokens.key?(current_group_id)
+            grouped_tokens[current_group_id].concat(current_group)
+          else
+            grouped_tokens[current_group_id] = Array(current_group)
+          end
+          
+          current_group = []
+          current_group_id = token[0].to_s + ':ext:' + token[1].name.to_s
+          group_ids.push(current_group_id)
+        end
+        
+        current_group.push(token[1])
       end
+      
+      if !current_group.empty?
+        if grouped_tokens.key?(current_group_id)
+          grouped_tokens[current_group_id].concat(current_group)
+        else
+          grouped_tokens[current_group_id] = Array(current_group)
+        end
+      end
+      
+      mark_names_counts = {}
+      
+      # Collapse groups by extension constraints.
+      supergroups = {}
+      
+      group_ids.uniq.map { |id|
+        matches = /(.+)\:ext\:(.+)/.match(id)  
+        key = if !matches.nil? then matches[2].strip else '' end
+        supergroups[key] = Array.new unless supergroups.key?(key)
+        supergroups[key].push(id)
+      }
+      
+      collapsed_group_ids = []
+
+      supergroups.map { |key, groups|
+        first_id = groups.first
+        groups[1..-1].map { |id|
+          grouped_tokens[first_id].concat(grouped_tokens[id])
+          grouped_tokens.delete(id)
+        }
+        collapsed_group_ids.push(first_id)
+      }
+      
+      tasks = []
+      
+      collapsed_group_ids.map { |group_id|
+        grouped_tokens[group_id].map do |mark|          
+          mark_children = children.select { |child| child.mark == mark }
+          items = mark_children.map { |child| render_item(child, source_module) }
+          uid = (mark.name || 'Unnamed').to_s
+          if mark_names_counts.key?(uid)
+            mark_names_counts[uid] += 1
+            uid += (mark_names_counts[uid]).to_s
+          else
+            mark_names_counts[uid] = 1
+          end
+          
+          if !tasks.empty? && tasks.last[:name] == mark.name
+            tasks.last[:items].concat(items)
+          else
+            tasks.push(make_task(mark, uid, items))
+          end
+        end
+      }
+      
+      return tasks
     end
 
     # rubocop:disable Metrics/MethodLength

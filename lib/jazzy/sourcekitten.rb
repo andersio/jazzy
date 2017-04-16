@@ -314,21 +314,33 @@ module Jazzy
     def self.make_doc_info(doc, declaration)
       return unless should_document?(doc)
 
-      unless doc['key.doc.full_as_xml']
+      unless declaration.type.reactivecocoa_extension? || doc['key.doc.full_as_xml']
         return process_undocumented_token(doc, declaration)
       end
 
-      declaration.declaration = Highlighter.highlight(
-        doc['key.parsed_declaration'] || doc['key.doc.declaration'],
-        Config.instance.objc_mode ? 'objc' : 'swift',
-      )
-      if Config.instance.objc_mode && doc['key.swift_declaration']
-        declaration.other_language_declaration = Highlighter.highlight(
-          doc['key.swift_declaration'], 'swift'
+      if declaration.type.reactivecocoa_extension?
+        declaration.declaration = Highlighter.highlight(
+          "extension Reactive where Base: " + declaration.name,
+          'swift'
         )
+        
+        declaration.abstract = Jazzy.markdown.render(%{
+The reactive extension can be accessed through the `reactive` instance property and the `reactive` static property.})
+      else
+        declaration.declaration = Highlighter.highlight(
+          doc['key.parsed_declaration'] || doc['key.doc.declaration'],
+          Config.instance.objc_mode ? 'objc' : 'swift',
+        )
+        
+        if Config.instance.objc_mode && doc['key.swift_declaration']
+          declaration.other_language_declaration = Highlighter.highlight(
+            doc['key.swift_declaration'], 'swift'
+          )
+        end
+        
+        declaration.abstract = Jazzy.markdown.render(doc['key.doc.comment'] || '')
       end
-
-      declaration.abstract = Jazzy.markdown.render(doc['key.doc.comment'] || '')
+        
       declaration.discussion = ''
       declaration.return = make_paragraphs(doc, 'key.doc.result_discussion')
 
@@ -339,23 +351,40 @@ module Jazzy
     # rubocop:enable Metrics/CyclomaticComplexity
     # rubocop:enable Metrics/PerceivedComplexity
 
-    def self.make_substructure(doc, declaration)
+    def self.make_substructure(doc, declaration, extension_mark = nil)
       declaration.children = if doc['key.substructure']
                                make_source_declarations(
                                  doc['key.substructure'],
                                  declaration,
+                                 extension_mark
                                )
                              else
                                []
                              end
     end
 
+    def self.get_first_filepath(substructures, source_directory)
+      Array(substructures).each do |substructure|
+        if substructure.key?('key.filepath') && substructure['key.filepath'].start_with?(source_directory)
+          return substructure['key.filepath']
+        elsif substructure.key?('key.substructure')
+          filepath = get_first_filepath(substructure['key.substructure'], source_directory)
+          return filepath if filepath && filepath.to_s.strip.length > 0
+        end
+      end
+        
+      return nil
+    end
+
     # rubocop:disable Metrics/MethodLength
     # rubocop:disable Metrics/CyclomaticComplexity
     # rubocop:disable Metrics/PerceivedComplexity
-    def self.make_source_declarations(docs, parent = nil)
+    def self.make_source_declarations(docs, parent = nil, extension_mark = nil)
+      source_directory = Config.instance.source_directory.to_s
       declarations = []
-      current_mark = SourceMark.new
+      current_mark = if !extension_mark.nil? then extension_mark else SourceMark.new end
+      rac_extension_base = nil
+      
       Array(docs).each do |doc|
         if doc.key?('key.diagnostic_stage')
           declarations += make_source_declarations(
@@ -363,11 +392,66 @@ module Jazzy
           )
           next
         end
+        
         declaration = SourceDeclaration.new
         declaration.parent_in_code = parent
         declaration.type = SourceDeclaration::Type.new(doc['key.kind'])
-        declaration.typename = doc['key.typename']
-        current_mark = SourceMark.new(doc['key.name']) if declaration.type.mark?
+
+        if declaration.type.mark?
+          mark = SourceMark.new(doc['key.name']) 
+        
+          if matches = /RAC\_EXTENSION\s([a-zA-Z0-9]+)\sSTART/.match(mark.name)
+            rac_extension_base = matches[1]
+            next
+          elsif rac_extension_base &&
+                matches = /RAC\_EXTENSION\s#{Regexp.quote(rac_extension_base)}\sEND/.match(mark.name)
+            rac_extension_base = nil
+            next
+          else
+            current_mark = mark
+          end
+        end
+        
+        if declaration.type.swift_extension? && rac_extension_base
+          declaration.type = SourceDeclaration::Type.new('source.lang.swift.decl.reactivecocoaextension')
+          declaration.name = rac_extension_base
+          declaration.typename = 'Reactive<' + rac_extension_base + '>.Type'
+        else
+          declaration.typename = doc['key.typename']
+          declaration.name = doc['key.name']
+        end
+          
+        extension_mark = nil
+        
+        if declaration.type.swift_extension?          
+          # Search children for the source file path, since `doc['key.filepath']` does
+          # not refer to the file that the extension belongs to.
+          full_file_path = get_first_filepath(doc['key.substructure'], source_directory)
+
+          if full_file_path.to_s.start_with?(source_directory)          
+            byte_start = doc['key.nameoffset'].to_i + doc['key.namelength'].to_i
+            byte_end = doc['key.bodyoffset'].to_i
+          
+            if byte_end > byte_start
+              bytes = IO.read(full_file_path, byte_end - byte_start, byte_start)
+          
+              #results = /where\sBase\s?\:\s?([a-zA-Z0-9]+)\s?/.match(constraint)
+              if matches = /where(.+)\{/.match(bytes)
+                if doc['key.name'] == 'Reactive' &&
+                   base_matches = /Base\s?\:\s?([a-zA-Z0-9]+)/.match(matches[1])
+                  declaration.type = SourceDeclaration::Type.new('source.lang.swift.decl.reactivecocoaextension')
+                  declaration.name = base_matches[1]
+                  declaration.typename = 'Reactive<' + base_matches[1] + '>.Type'
+                else
+                  extension_mark = SourceMark.new(matches[1].strip, true)
+                end
+              else
+                extension_mark = SourceMark.new('', true)
+              end
+            end
+          end
+        end
+
         if declaration.type.swift_enum_case?
           # Enum "cases" are thin wrappers around enum "elements".
           declarations += make_source_declarations(
@@ -375,6 +459,7 @@ module Jazzy
           )
           next
         end
+        
         next unless declaration.type.should_document?
 
         unless declaration.type.name
@@ -382,11 +467,10 @@ module Jazzy
                 'https://github.com/realm/jazzy/issues about adding support ' \
                 "for `#{declaration.type.kind}`."
         end
-
+				
         declaration.file = Pathname(doc['key.filepath']) if doc['key.filepath']
         declaration.usr = doc['key.usr']
         declaration.modulename = doc['key.modulename']
-        declaration.name = doc['key.name']
         declaration.mark = current_mark
         declaration.access_control_level =
           SourceDeclaration::AccessControlLevel.from_doc(doc)
@@ -396,7 +480,7 @@ module Jazzy
         declaration.end_line = doc['key.parsed_scope.end']
 
         next unless make_doc_info(doc, declaration)
-        make_substructure(doc, declaration)
+        make_substructure(doc, declaration, extension_mark)
         declarations << declaration
       end
       declarations
@@ -438,7 +522,14 @@ module Jazzy
     # Two declarations get merged if they have the same deduplication key.
     def self.deduplication_key(decl, root_decls)
       if decl.type.swift_extensible? || decl.type.swift_extension?
-        [decl.usr, decl.name]
+        # Collapse the signal protocols into the concrete type.
+        if decl.name == 'Signal' || decl.name == 'SignalProtocol'
+          ['ras.Signal']
+        elsif decl.name == 'SignalProducer' || decl.name == 'SignalProducerProtocol'
+          ['ras.SignalProducer']
+        else
+          [decl.usr, decl.name]
+        end
       elsif mergeable_objc?(decl, root_decls)
         name, _ = decl.objc_category_name || decl.name
         [name, :objc_class_and_categories]
@@ -452,12 +543,21 @@ module Jazzy
     def self.merge_declarations(decls)
       extensions, typedecls = decls.partition { |d| d.type.extension? }
 
-      if typedecls.size > 1
-        warn 'Found conflicting type declarations with the same name, which ' \
-          'may indicate a build issue or a bug in Jazzy: ' +
-             typedecls.map { |t| "#{t.type.name.downcase} #{t.name}" }
-             .join(', ')
+      collapsing_signal_protocol = typedecls.any? { |decl| decl.name == 'SignalProtocol' || decl.name == 'SignalProducerProtocol' }
+      
+      if !collapsing_signal_protocol && typedecls.size > 1
+        unless typedecls.all? { |decl| decl.type.reactivecocoa_extension? }
+          warn 'Found conflicting type declarations with the same name, which ' \
+            'may indicate a build issue or a bug in Jazzy: ' +
+              typedecls.map { |t| "#{t.type.name.downcase} #{t.name}" }
+                .join(', ')
+        end
       end
+      
+      if collapsing_signal_protocol
+        typedecls.delete_if { |decl| decl.name.end_with?('Protocol') }
+      end
+      
       typedecl = typedecls.first
 
       if typedecl && typedecl.type.swift_protocol?
@@ -633,6 +733,7 @@ module Jazzy
       sourcekitten_json = filter_excluded_files(JSON.parse(sourcekitten_output))
       docs = make_source_declarations(sourcekitten_json).concat inject_docs
       docs = deduplicate_declarations(docs)
+      
       if Config.instance.objc_mode
         docs = reject_objc_types(docs)
       else
@@ -640,6 +741,7 @@ module Jazzy
         # than min_acl
         docs = docs.reject { |doc| doc.type.swift_enum_element? }
       end
+
       ungrouped_docs = docs
       docs = group_docs(docs)
       make_doc_urls(docs)
